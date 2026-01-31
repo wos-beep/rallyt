@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SvS Command Center - Royal Edition v2</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        .progress-fill { transition: width 0.1s linear; }
+        .is-warning { background-color: #eab308; }
+        .is-danger { background-color: #ef4444; animation: flash 0.5s infinite; }
+        @keyframes flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+        .notified { opacity: 0.4; filter: grayscale(0.8); pointer-events: none; }
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        .scroll-input:hover { border-color: #22d3ee; background-color: #1e293b; cursor: ns-resize; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-4 font-sans antialiased">
+
+    <div class="max-w-md mx-auto space-y-4">
+        <div class="flex justify-between items-center bg-slate-900 px-4 py-1.5 rounded-full border border-slate-800 text-[10px]">
+            <div class="flex items-center gap-2">
+                <div id="sync-indicator" class="w-2 h-2 rounded-full bg-yellow-500"></div>
+                <span id="sync-status" class="text-slate-500 italic">Syncing with Royal Server...</span>
+            </div>
+            <div id="time-offset" class="font-mono text-slate-600">Offset: 0ms</div>
+        </div>
+
+        <header class="text-center py-2">
+            <div id="utc-clock" class="text-6xl font-mono font-bold leading-none tabular-nums text-white tracking-tighter">00:00:00<span class="text-xl text-slate-600">.000</span></div>
+            <p class="text-[10px] text-cyan-500 font-bold tracking-[0.2em] mt-2 uppercase">Current Strategic Time (UTC)</p>
+        </header>
+
+        <section class="bg-slate-900 p-5 rounded-3xl border border-slate-800 shadow-2xl space-y-5">
+            <div>
+                <label class="block text-[10px] text-slate-400 mb-2 font-bold uppercase tracking-widest text-center">Impact Target (UTC)</label>
+                <div class="flex items-center gap-2 font-mono">
+                    <div class="flex-1 text-center group">
+                        <input type="number" id="t-h" min="0" max="23" placeholder="HH" class="scroll-input bg-slate-950 w-full py-3 rounded-xl text-center outline-none border border-slate-800 transition-all text-2xl font-bold focus:border-cyan-500">
+                    </div>
+                    <span class="text-slate-700 font-bold text-2xl">:</span>
+                    <div class="flex-1 text-center group">
+                        <input type="number" id="t-m" min="0" max="59" placeholder="MM" class="scroll-input bg-slate-950 w-full py-3 rounded-xl text-center outline-none border border-slate-800 transition-all text-2xl font-bold focus:border-cyan-500">
+                    </div>
+                    <span class="text-slate-700 font-bold text-2xl">:</span>
+                    <div class="flex-1 text-center group">
+                        <input type="number" id="t-s" min="0" max="59" placeholder="SS" class="scroll-input bg-slate-950 w-full py-3 rounded-xl text-center outline-none border border-slate-800 transition-all text-2xl font-bold focus:border-cyan-500">
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4 items-center">
+                <div class="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                    <label class="block text-[9px] text-slate-500 mb-1 font-bold ml-1 uppercase">Rally Mode</label>
+                    <select id="rally-time" onchange="handleTargetChange()" class="bg-transparent w-full outline-none text-sm text-cyan-400 font-bold cursor-pointer">
+                        <option value="1">1 Min Rally</option><option value="3">3 Min Rally</option>
+                        <option value="5" selected>5 Min Rally</option><option value="10">10 Min Rally</option>
+                    </select>
+                </div>
+                <div class="flex items-center justify-center gap-3">
+                    <input type="checkbox" id="enable-sound" onchange="savePlayers()" class="w-5 h-5 rounded accent-cyan-500 cursor-pointer" checked>
+                    <label for="enable-sound" class="text-xs text-slate-300 font-medium cursor-pointer">Audio Alert</label>
+                </div>
+            </div>
+            <button onclick="clearHistory()" class="w-full py-2 text-[10px] text-slate-500 border border-slate-800 rounded-lg hover:bg-slate-800 uppercase font-bold tracking-widest transition-colors">Reset Alerts</button>
+        </section>
+
+        <div id="player-list" class="space-y-4 pb-24"></div>
+
+        <div class="fixed bottom-6 left-1/2 -translate-x-1/2 w-full max-w-md px-4">
+            <button onclick="addPlayer()" class="w-full py-4 bg-cyan-600 hover:bg-cyan-500 text-white rounded-2xl shadow-lg font-bold flex items-center justify-center gap-2 transition-transform active:scale-95 uppercase tracking-widest">
+                <i data-lucide="shield-plus" class="w-5 h-5"></i> Add Lord
+            </button>
+        </div>
+    </div>
+
+    <script>
+        let players = [];
+        let notifiedSet = new Set();
+        let audioCtx = null;
+        let deviceOffset = 0;
+
+        function init() {
+            setInitialTargetTime();
+            setupScrollAndValidation();
+            syncTime();
+            setInterval(syncTime, 30000);
+            loadPlayers();
+            requestAnimationFrame(update);
+            document.body.addEventListener('click', () => {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }, { once: true });
+        }
+
+        function setInitialTargetTime() {
+            const now = new Date();
+            const target = new Date(now.getTime() + 3 * 60 * 1000);
+            document.getElementById('t-h').value = target.getUTCHours();
+            document.getElementById('t-m').value = target.getUTCMinutes();
+            document.getElementById('t-s').value = 0;
+        }
+
+        function setupScrollAndValidation() {
+            const ids = ['t-h', 't-m', 't-s'];
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                el.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    let current = parseInt(el.value) || 0;
+                    const max = parseInt(el.max);
+                    current = (e.deltaY < 0) ? (current >= max ? 0 : current + 1) : (current <= 0 ? max : current - 1);
+                    el.value = current;
+                    handleTargetChange();
+                }, { passive: false });
+                el.addEventListener('blur', handleTargetChange);
+            });
+        }
+
+        function handleTargetChange() { clearHistory(); savePlayers(); }
+
+        function savePlayers() {
+            const data = {
+                players: players,
+                rallyTime: document.getElementById('rally-time').value,
+                soundEnabled: document.getElementById('enable-sound').checked
+            };
+            localStorage.setItem('svs_timer_lord_v1', JSON.stringify(data));
+        }
+
+        function loadPlayers() {
+            const saved = localStorage.getItem('svs_timer_lord_v1');
+            if (saved) {
+                const data = JSON.parse(saved);
+                players = data.players || [];
+                document.getElementById('rally-time').value = data.rallyTime || "5";
+                document.getElementById('enable-sound').checked = data.soundEnabled !== false;
+                render();
+            } else { addPlayer(); }
+        }
+
+        async function syncTime() {
+            try {
+                const start = Date.now();
+                const response = await fetch(window.location.href, { method: 'HEAD', cache: 'no-cache' });
+                const serverDate = new Date(response.headers.get('Date')).getTime();
+                const latency = (Date.now() - start) / 2;
+                deviceOffset = (serverDate + latency) - Date.now();
+                document.getElementById('sync-indicator').className = "w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]";
+                document.getElementById('sync-status').textContent = "Server Synced";
+                document.getElementById('time-offset').textContent = `Offset: ${Math.round(deviceOffset)}ms`;
+            } catch (e) { document.getElementById('sync-status').textContent = "Sync Error"; }
+        }
+
+        function playTick(isFinal = false) {
+            if (!document.getElementById('enable-sound').checked || !audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.frequency.setValueAtTime(isFinal ? 1200 : 800, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.15);
+        }
+
+        function update() {
+            const nowMs = Date.now() + deviceOffset;
+            const now = new Date(nowMs);
+            document.getElementById('utc-clock').innerHTML = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}:${String(now.getUTCSeconds()).padStart(2, '0')}<span class="text-xl text-slate-600">.${String(now.getUTCMilliseconds()).padStart(3, '0')}</span>`;
+
+            const tH = parseInt(document.getElementById('t-h').value);
+            const tM = parseInt(document.getElementById('t-m').value);
+            const tS = parseInt(document.getElementById('t-s').value) || 0;
+            const rallySec = parseInt(document.getElementById('rally-time').value) * 60;
+
+            if (!isNaN(tH) && !isNaN(tM)) {
+                players.forEach(p => {
+                    let target = new Date(now);
+                    target.setUTCHours(tH, tM, tS, 0);
+                    if (target.getTime() - nowMs < -43200000) target.setUTCDate(target.getUTCDate() + 1);
+
+                    const departTimeMs = target.getTime() - (rallySec + (p.offset || 0) + (p.subOffset || 0)) * 1000;
+                    const diffMs = departTimeMs - nowMs;
+                    const diffSec = diffMs / 1000;
+
+                    const card = document.getElementById(`card-${p.id}`);
+                    if (!card) return;
+
+                    const bar = document.getElementById(`bar-${p.id}`);
+                    const countdownText = document.getElementById(`cd-${p.id}`);
+                    const dDate = new Date(departTimeMs);
+                    document.getElementById(`time-${p.id}`).textContent = dDate.toISOString().substr(11, 8);
+
+                    if (diffSec > 0) {
+                        countdownText.textContent = diffSec < 10 ? diffSec.toFixed(1) : Math.floor(diffSec);
+                        const percentage = Math.max(0, Math.min(100, (diffSec / 30) * 100));
+                        if (bar) {
+                            bar.style.width = `${percentage}%`;
+                            bar.className = `progress-fill h-full ${diffSec <= 5 ? 'is-danger' : diffSec <= 15 ? 'is-warning' : 'bg-cyan-500'}`;
+                        }
+                    } else {
+                        countdownText.textContent = "0.0";
+                        setTimeout(() => { if(diffMs <= 0) countdownText.textContent = "DEPART!"; }, 100);
+                        card.classList.add('notified');
+                    }
+
+                    for (let i = 1; i <= 5; i++) {
+                        const key = `${p.id}_tick_${i}`;
+                        if (diffSec <= i && diffSec > i - 0.1 && !notifiedSet.has(key)) {
+                            playTick(false); notifiedSet.add(key);
+                        }
+                    }
+                    const finalKey = `${p.id}_final`;
+                    if (diffSec <= 0.05 && diffSec >= -0.5 && !notifiedSet.has(finalKey)) {
+                        playTick(true); notifiedSet.add(finalKey);
+                    }
+                });
+            }
+            requestAnimationFrame(update);
+        }
+
+        function addPlayer() {
+            const id = Math.random().toString(36).substr(2, 5);
+            // subOffset を 0 に初期化
+            players.push({ id, name: '', offset: 0, subOffset: 0 });
+            render(); savePlayers();
+        }
+        function removePlayer(id) { players = players.filter(p => p.id !== id); render(); savePlayers(); }
+        
+        function render() {
+            const container = document.getElementById('player-list');
+            container.innerHTML = players.map(p => {
+                let options = "";
+                // 誤差を避けるため、整数（x10）でループ処理
+                for(let i = -9; i <= 9; i++) {
+                    const valNum = i / 10;
+                    const valStr = valNum.toFixed(1);
+                    // 保存されている値と一致するか比較
+                    const isSelected = (p.subOffset || 0).toFixed(1) === valStr ? 'selected' : '';
+                    const label = valNum > 0 ? `+${valStr}s (Lag)` : valNum < 0 ? `${valStr}s (Fast)` : `±0.0s (Fixed)`;
+                    options += `<option value="${valStr}" ${isSelected}>${label}</option>`;
+                }
+
+                return `
+                <div id="card-${p.id}" class="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden shadow-xl">
+                    <div class="p-5 space-y-3">
+                        <div class="flex justify-between items-center">
+                            <input type="text" placeholder="Lord Name" value="${p.name}" onchange="updateData('${p.id}', 'name', this.value)" class="bg-transparent font-bold text-lg outline-none w-1/2 focus:text-cyan-400">
+                            <button onclick="removePlayer('${p.id}')" class="text-slate-700 hover:text-red-500"><i data-lucide="trash-2" class="w-5 h-5"></i></button>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <span class="text-[9px] text-slate-500 uppercase font-black mb-1 block tracking-tighter">Travel Time (sec)</span>
+                                <input type="number" step="any" placeholder="0" value="${p.offset || ''}" onchange="updateData('${p.id}', 'offset', this.value)" class="bg-slate-950 w-full p-2 rounded-xl text-xl font-mono text-cyan-400 border border-slate-800 outline-none">
+                            </div>
+                            <div>
+                                <span class="text-[9px] text-slate-500 uppercase font-black mb-1 block tracking-tighter">Micro Adjust</span>
+                                <select onchange="updateData('${p.id}', 'subOffset', this.value)" class="bg-slate-950 w-full p-2 h-[46px] rounded-xl text-[11px] font-bold text-yellow-500 border border-slate-800 outline-none cursor-pointer">
+                                    ${options}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between bg-black/30 p-3 rounded-2xl border border-white/5">
+                            <div class="text-[10px] text-slate-500 font-mono">DEPART: <span id="time-${p.id}" class="text-slate-300">--:--:--</span></div>
+                            <div class="text-right">
+                                <span class="text-[9px] text-slate-500 uppercase font-black block">Remaining</span>
+                                <div id="cd-${p.id}" class="text-3xl font-black font-mono text-white tabular-nums leading-none">--</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="h-1.5 bg-slate-950 w-full"><div id="bar-${p.id}" class="progress-fill h-full bg-cyan-500" style="width: 0%"></div></div>
+                </div>`;
+            }).join('');
+            lucide.createIcons();
+        }
+
+        function updateData(id, field, value) {
+            const p = players.find(x => x.id === id);
+            if (p) {
+                p[field] = (field === 'name') ? value : parseFloat(value) || 0;
+                clearHistory(); savePlayers();
+            }
+        }
+        function clearHistory() { notifiedSet.clear(); players.forEach(p => { const card = document.getElementById(`card-${p.id}`); if (card) card.classList.remove('notified'); }); }
+        init();
+    </script>
+</body>
+</html>
