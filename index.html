@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>SvS Command Center - Royal v2.3</title>
+    <title>SvS Command Center - Royal v2.4</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
@@ -11,7 +11,6 @@
         .is-warning { background-color: #eab308; }
         .is-danger { background-color: #ef4444; animation: flash 0.5s infinite; }
         @keyframes flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
-        /* 修正：pointer-events を削除し、編集を可能に */
         .notified { opacity: 0.5; filter: grayscale(0.6); }
         input[type=number]::-webkit-inner-spin-button, 
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -58,7 +57,7 @@
                 </div>
                 <div class="flex items-center justify-center gap-3">
                     <input type="checkbox" id="enable-sound" onchange="savePlayers()" class="w-5 h-5 rounded accent-cyan-500" checked>
-                    <label for="enable-sound" class="text-xs text-slate-300 font-medium cursor-pointer">Audio Alert</label>
+                    <label for="enable-sound" class="text-xs text-slate-300 font-medium cursor-pointer">Audio Master</label>
                 </div>
             </div>
         </section>
@@ -114,13 +113,13 @@
         function handleTargetChange() { clearHistory(); savePlayers(); }
 
         function savePlayers() {
-            localStorage.setItem('svs_timer_v2_3', JSON.stringify({
+            localStorage.setItem('svs_timer_v2_4', JSON.stringify({
                 players, rallyTime: document.getElementById('rally-time').value, soundEnabled: document.getElementById('enable-sound').checked
             }));
         }
 
         function loadPlayers() {
-            const saved = localStorage.getItem('svs_timer_v2_3');
+            const saved = localStorage.getItem('svs_timer_v2_4');
             if (saved) {
                 const data = JSON.parse(saved);
                 players = data.players || [];
@@ -183,7 +182,7 @@
                     const bar = document.getElementById(`bar-${p.id}`);
 
                     if (diffSec > 0) {
-                        card.classList.remove('notified'); // ターゲット更新時にグレーアウト解除
+                        card.classList.remove('notified');
                         countdownText.textContent = diffSec < 10 ? diffSec.toFixed(1) : Math.floor(diffSec);
                         if (bar) {
                             bar.style.width = `${Math.max(0, Math.min(100, (diffSec / 30) * 100))}%`;
@@ -191,11 +190,13 @@
                         }
                     } else {
                         countdownText.textContent = "0.0";
-                        if (diffMs < -2000) card.classList.add('notified'); // 2秒過ぎたらグレーアウト
+                        if (diffMs < -2000) card.classList.add('notified');
                         if (bar) bar.style.width = "0%";
                     }
 
-                    // サウンド
+                    // 個別ミュートの判定を含めたサウンド再生
+                    if (p.isMuted) return;
+
                     for (let i = 1; i <= 5; i++) {
                         const key = `${p.id}_tick_${i}`;
                         if (diffSec <= i && diffSec > i - 0.1 && !notifiedSet.has(key)) {
@@ -213,11 +214,20 @@
 
         function addPlayer() {
             const id = Math.random().toString(36).substr(2, 5);
-            players.push({ id, name: '', offset: 0, subOffset: 0 });
+            players.push({ id, name: '', offset: 0, subOffset: 0, isMuted: false });
             render(); savePlayers();
         }
         function removePlayer(id) { players = players.filter(p => p.id !== id); render(); savePlayers(); }
         
+        function toggleMute(id) {
+            const p = players.find(x => x.id === id);
+            if (p) {
+                p.isMuted = !p.isMuted;
+                render();
+                savePlayers();
+            }
+        }
+
         function render() {
             const container = document.getElementById('player-list');
             container.innerHTML = players.map(p => {
@@ -227,20 +237,30 @@
                     const isSelected = (p.subOffset || 0).toFixed(1) === val ? 'selected' : '';
                     options += `<option value="${val}" ${isSelected}>${i > 0 ? '+' : ''}${val}s</option>`;
                 }
+                const muteIcon = p.isMuted ? 'volume-x' : 'volume-2';
+                const muteColor = p.isMuted ? 'text-red-500' : 'text-cyan-500';
+
                 return `
-                <div id="card-${p.id}" class="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden shadow-xl transition-all duration-300">
+                <div id="card-${p.id}" class="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden shadow-xl transition-all duration-300 relative">
                     <div class="p-5 space-y-3">
                         <div class="flex justify-between items-center">
                             <input type="text" placeholder="Lord Name" value="${p.name}" onchange="updateData('${p.id}', 'name', this.value)" class="bg-transparent font-bold text-lg outline-none w-1/2 focus:text-cyan-400">
-                            <button onclick="removePlayer('${p.id}')" class="text-slate-700 hover:text-red-500"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                            <div class="flex items-center gap-4">
+                                <button onclick="toggleMute('${p.id}')" class="${muteColor} hover:scale-110 transition-transform">
+                                    <i data-lucide="${muteIcon}" class="w-5 h-5"></i>
+                                </button>
+                                <button onclick="removePlayer('${p.id}')" class="text-slate-700 hover:text-red-500">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
+                            </div>
                         </div>
                         <div class="grid grid-cols-2 gap-4">
                             <div>
-                                <span class="text-[9px] text-slate-500 uppercase font-black mb-1 block">Travel Time (sec)</span>
+                                <span class="text-[9px] text-slate-500 uppercase font-black mb-1 block tracking-tighter">Travel Time (sec)</span>
                                 <input type="number" step="any" placeholder="0" value="${p.offset || ''}" onchange="updateData('${p.id}', 'offset', this.value)" class="bg-slate-950 w-full p-2 rounded-xl text-xl font-mono text-cyan-400 border border-slate-800 outline-none focus:border-cyan-500">
                             </div>
                             <div>
-                                <span class="text-[9px] text-slate-500 uppercase font-black mb-1 block">Micro Adjust</span>
+                                <span class="text-[9px] text-slate-500 uppercase font-black mb-1 block tracking-tighter">Micro Adjust</span>
                                 <select onchange="updateData('${p.id}', 'subOffset', this.value)" class="bg-slate-950 w-full p-2 h-[46px] rounded-xl text-xs font-bold text-yellow-500 border border-slate-800 outline-none cursor-pointer">
                                     ${options}
                                 </select>
