@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>SvS Command Center - Royal v2.4</title>
+    <title>SvS Command Center - Royal v2.5</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
@@ -33,7 +33,7 @@
             <p class="text-[10px] text-cyan-500 font-bold tracking-[0.2em] mt-2 uppercase">Current Strategic Time (UTC)</p>
         </header>
 
-        <section class="bg-slate-900 p-5 rounded-3xl border border-slate-800 shadow-2xl space-y-5">
+        <section class="bg-slate-900 p-5 rounded-3xl border border-slate-800 shadow-2xl space-y-4">
             <div>
                 <label class="block text-[10px] text-slate-400 mb-2 font-bold uppercase tracking-widest text-center">Impact Target (UTC)</label>
                 <div class="flex items-center gap-2 font-mono">
@@ -57,9 +57,13 @@
                 </div>
                 <div class="flex items-center justify-center gap-3">
                     <input type="checkbox" id="enable-sound" onchange="savePlayers()" class="w-5 h-5 rounded accent-cyan-500" checked>
-                    <label for="enable-sound" class="text-xs text-slate-300 font-medium cursor-pointer">Audio Master</label>
+                    <label for="enable-sound" class="text-xs text-slate-300 font-medium">Audio Master</label>
                 </div>
             </div>
+
+            <button onclick="copyToClipboard()" class="w-full py-3 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-slate-700 transition-colors uppercase tracking-widest shadow-inner">
+                <i data-lucide="copy" class="w-4 h-4"></i> Copy Strategic Orders
+            </button>
         </section>
 
         <div id="player-list" class="space-y-4 pb-24"></div>
@@ -113,13 +117,13 @@
         function handleTargetChange() { clearHistory(); savePlayers(); }
 
         function savePlayers() {
-            localStorage.setItem('svs_timer_v2_4', JSON.stringify({
+            localStorage.setItem('svs_timer_v2_5', JSON.stringify({
                 players, rallyTime: document.getElementById('rally-time').value, soundEnabled: document.getElementById('enable-sound').checked
             }));
         }
 
         function loadPlayers() {
-            const saved = localStorage.getItem('svs_timer_v2_4');
+            const saved = localStorage.getItem('svs_timer_v2_5');
             if (saved) {
                 const data = JSON.parse(saved);
                 players = data.players || [];
@@ -177,7 +181,11 @@
                     const card = document.getElementById(`card-${p.id}`);
                     if (!card) return;
 
-                    document.getElementById(`time-${p.id}`).textContent = new Date(departTimeMs).toISOString().substr(11, 8);
+                    const timeStr = new Date(departTimeMs).toISOString().substr(11, 8);
+                    document.getElementById(`time-${p.id}`).textContent = timeStr;
+                    p.currentDepart = timeStr; // コピー用に保存
+                    p.rawDepartTime = departTimeMs;
+
                     const countdownText = document.getElementById(`cd-${p.id}`);
                     const bar = document.getElementById(`bar-${p.id}`);
 
@@ -194,22 +202,42 @@
                         if (bar) bar.style.width = "0%";
                     }
 
-                    // 個別ミュートの判定を含めたサウンド再生
                     if (p.isMuted) return;
-
                     for (let i = 1; i <= 5; i++) {
                         const key = `${p.id}_tick_${i}`;
                         if (diffSec <= i && diffSec > i - 0.1 && !notifiedSet.has(key)) {
                             playTick(false); notifiedSet.add(key);
                         }
                     }
-                    const finalKey = `${p.id}_final`;
-                    if (diffSec <= 0.05 && diffSec >= -0.1 && !notifiedSet.has(finalKey)) {
-                        playTick(true); notifiedSet.add(finalKey);
+                    if (diffSec <= 0.05 && diffSec >= -0.1 && !notifiedSet.has(`${p.id}_final`)) {
+                        playTick(true); notifiedSet.add(`${p.id}_final`);
                     }
                 });
             }
             requestAnimationFrame(update);
+        }
+
+        function copyToClipboard() {
+            const h = document.getElementById('t-h').value.padStart(2, '0');
+            const m = document.getElementById('t-m').value.padStart(2, '0');
+            const s = (document.getElementById('t-s').value || "0").padStart(2, '0');
+            const rally = document.getElementById('rally-time').value;
+
+            // 出発が早い順（rawDepartTimeが小さい順）にソート
+            const sortedPlayers = [...players].sort((a, b) => (a.rawDepartTime || 0) - (b.rawDepartTime || 0));
+
+            let text = `着弾時間：${h}:${m}:${s} (UTC)\n`;
+            text += `集結${rally}分\n`;
+            text += `--------------------\n`;
+            sortedPlayers.forEach(p => {
+                if(p.name && p.currentDepart) {
+                    text += `${p.name}: ${p.currentDepart}\n`;
+                }
+            });
+
+            navigator.clipboard.writeText(text).then(() => {
+                alert("Strategic Orders copied to clipboard!");
+            });
         }
 
         function addPlayer() {
@@ -218,14 +246,9 @@
             render(); savePlayers();
         }
         function removePlayer(id) { players = players.filter(p => p.id !== id); render(); savePlayers(); }
-        
         function toggleMute(id) {
             const p = players.find(x => x.id === id);
-            if (p) {
-                p.isMuted = !p.isMuted;
-                render();
-                savePlayers();
-            }
+            if (p) { p.isMuted = !p.isMuted; render(); savePlayers(); }
         }
 
         function render() {
@@ -237,17 +260,14 @@
                     const isSelected = (p.subOffset || 0).toFixed(1) === val ? 'selected' : '';
                     options += `<option value="${val}" ${isSelected}>${i > 0 ? '+' : ''}${val}s</option>`;
                 }
-                const muteIcon = p.isMuted ? 'volume-x' : 'volume-2';
-                const muteColor = p.isMuted ? 'text-red-500' : 'text-cyan-500';
-
                 return `
-                <div id="card-${p.id}" class="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden shadow-xl transition-all duration-300 relative">
+                <div id="card-${p.id}" class="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden shadow-xl transition-all duration-300">
                     <div class="p-5 space-y-3">
                         <div class="flex justify-between items-center">
                             <input type="text" placeholder="Lord Name" value="${p.name}" onchange="updateData('${p.id}', 'name', this.value)" class="bg-transparent font-bold text-lg outline-none w-1/2 focus:text-cyan-400">
                             <div class="flex items-center gap-4">
-                                <button onclick="toggleMute('${p.id}')" class="${muteColor} hover:scale-110 transition-transform">
-                                    <i data-lucide="${muteIcon}" class="w-5 h-5"></i>
+                                <button onclick="toggleMute('${p.id}')" class="${p.isMuted ? 'text-red-500' : 'text-cyan-500'} hover:scale-110 transition-transform">
+                                    <i data-lucide="${p.isMuted ? 'volume-x' : 'volume-2'}" class="w-5 h-5"></i>
                                 </button>
                                 <button onclick="removePlayer('${p.id}')" class="text-slate-700 hover:text-red-500">
                                     <i data-lucide="trash-2" class="w-4 h-4"></i>
@@ -256,12 +276,12 @@
                         </div>
                         <div class="grid grid-cols-2 gap-4">
                             <div>
-                                <span class="text-[9px] text-slate-500 uppercase font-black mb-1 block tracking-tighter">Travel Time (sec)</span>
-                                <input type="number" step="any" placeholder="0" value="${p.offset || ''}" onchange="updateData('${p.id}', 'offset', this.value)" class="bg-slate-950 w-full p-2 rounded-xl text-xl font-mono text-cyan-400 border border-slate-800 outline-none focus:border-cyan-500">
+                                <span class="text-[9px] text-slate-500 uppercase font-black mb-1 block">Travel Time (sec)</span>
+                                <input type="number" step="any" placeholder="0" value="${p.offset || ''}" onchange="updateData('${p.id}', 'offset', this.value)" class="bg-slate-950 w-full p-2 rounded-xl text-xl font-mono text-cyan-400 border border-slate-800 outline-none">
                             </div>
                             <div>
-                                <span class="text-[9px] text-slate-500 uppercase font-black mb-1 block tracking-tighter">Micro Adjust</span>
-                                <select onchange="updateData('${p.id}', 'subOffset', this.value)" class="bg-slate-950 w-full p-2 h-[46px] rounded-xl text-xs font-bold text-yellow-500 border border-slate-800 outline-none cursor-pointer">
+                                <span class="text-[9px] text-slate-500 uppercase font-black mb-1 block">Micro Adjust</span>
+                                <select onchange="updateData('${p.id}', 'subOffset', this.value)" class="bg-slate-950 w-full p-2 h-[46px] rounded-xl text-xs font-bold text-yellow-500 border border-slate-800 outline-none">
                                     ${options}
                                 </select>
                             </div>
