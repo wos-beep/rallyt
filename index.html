@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>SvS Command Center - Royal v2.5</title>
+    <title>SvS Command Center - Royal v2.7</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
@@ -117,13 +117,13 @@
         function handleTargetChange() { clearHistory(); savePlayers(); }
 
         function savePlayers() {
-            localStorage.setItem('svs_timer_v2_5', JSON.stringify({
+            localStorage.setItem('svs_timer_v2_7', JSON.stringify({
                 players, rallyTime: document.getElementById('rally-time').value, soundEnabled: document.getElementById('enable-sound').checked
             }));
         }
 
         function loadPlayers() {
-            const saved = localStorage.getItem('svs_timer_v2_5');
+            const saved = localStorage.getItem('svs_timer_v2_7');
             if (saved) {
                 const data = JSON.parse(saved);
                 players = data.players || [];
@@ -165,25 +165,39 @@
             const tH = parseInt(document.getElementById('t-h').value);
             const tM = parseInt(document.getElementById('t-m').value);
             const tS = parseInt(document.getElementById('t-s').value) || 0;
-            const rallySec = parseInt(document.getElementById('rally-time').value) * 60;
+            const rallyMin = parseInt(document.getElementById('rally-time').value);
+            const rallySec = rallyMin * 60;
 
             if (!isNaN(tH) && !isNaN(tM)) {
                 players.forEach(p => {
-                    let target = new Date(now);
-                    target.setUTCHours(tH, tM, tS, 0);
-                    if (target.getTime() - nowMs < -43200000) target.setUTCDate(target.getUTCDate() + 1);
+                    let targetDate = new Date(now);
+                    targetDate.setUTCHours(tH, tM, tS, 0);
+                    if (targetDate.getTime() - nowMs < -43200000) targetDate.setUTCDate(targetDate.getUTCDate() + 1);
 
-                    const totalOffset = rallySec + (parseFloat(p.offset) || 0) + (parseFloat(p.subOffset) || 0);
-                    const departTimeMs = target.getTime() - (totalOffset * 1000);
+                    const travelSec = parseFloat(p.offset) || 0;
+                    const adjustSec = parseFloat(p.subOffset) || 0;
+                    const totalTravel = travelSec + adjustSec;
+                    const totalOffsetFromTarget = rallySec + totalTravel;
+
+                    const departTimeMs = targetDate.getTime() - (totalOffsetFromTarget * 1000);
                     const diffMs = departTimeMs - nowMs;
                     const diffSec = diffMs / 1000;
 
                     const card = document.getElementById(`card-${p.id}`);
                     if (!card) return;
 
-                    const timeStr = new Date(departTimeMs).toISOString().substr(11, 8);
-                    document.getElementById(`time-${p.id}`).textContent = timeStr;
-                    p.currentDepart = timeStr; // コピー用に保存
+                    const departDate = new Date(departTimeMs);
+                    document.getElementById(`time-${p.id}`).textContent = departDate.toISOString().substr(11, 8);
+                    
+                    // 修正：基準分（ターゲット分 - 集結分）- 行軍秒数
+                    // ターゲット時刻から「集結秒数」だけ引いた時刻の「分」を基準にする
+                    const baseRallyDate = new Date(targetDate.getTime() - (rallySec * 1000));
+                    const baseMinStr = String(baseRallyDate.getUTCMinutes()).padStart(2, '0');
+                    const formulaStr = `${baseMinStr}分 - ${totalTravel.toFixed(1)}s`;
+
+                    document.getElementById(`formula-${p.id}`).textContent = formulaStr;
+                    
+                    p.currentDepart = departDate.toISOString().substr(11, 8);
                     p.rawDepartTime = departTimeMs;
 
                     const countdownText = document.getElementById(`cd-${p.id}`);
@@ -204,9 +218,8 @@
 
                     if (p.isMuted) return;
                     for (let i = 1; i <= 5; i++) {
-                        const key = `${p.id}_tick_${i}`;
-                        if (diffSec <= i && diffSec > i - 0.1 && !notifiedSet.has(key)) {
-                            playTick(false); notifiedSet.add(key);
+                        if (diffSec <= i && diffSec > i - 0.1 && !notifiedSet.has(`${p.id}_tick_${i}`)) {
+                            playTick(false); notifiedSet.add(`${p.id}_tick_${i}`);
                         }
                     }
                     if (diffSec <= 0.05 && diffSec >= -0.1 && !notifiedSet.has(`${p.id}_final`)) {
@@ -223,7 +236,6 @@
             const s = (document.getElementById('t-s').value || "0").padStart(2, '0');
             const rally = document.getElementById('rally-time').value;
 
-            // 出発が早い順（rawDepartTimeが小さい順）にソート
             const sortedPlayers = [...players].sort((a, b) => (a.rawDepartTime || 0) - (b.rawDepartTime || 0));
 
             let text = `着弾時間：${h}:${m}:${s} (UTC)\n`;
@@ -277,7 +289,7 @@
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <span class="text-[9px] text-slate-500 uppercase font-black mb-1 block">Travel Time (sec)</span>
-                                <input type="number" step="any" placeholder="0" value="${p.offset || ''}" onchange="updateData('${p.id}', 'offset', this.value)" class="bg-slate-950 w-full p-2 rounded-xl text-xl font-mono text-cyan-400 border border-slate-800 outline-none">
+                                <input type="number" step="any" placeholder="0" value="${p.offset || ''}" onchange="updateData('${p.id}', 'offset', this.value)" class="bg-slate-950 w-full p-2 rounded-xl text-xl font-mono text-cyan-400 border border-slate-800 outline-none focus:border-cyan-500">
                             </div>
                             <div>
                                 <span class="text-[9px] text-slate-500 uppercase font-black mb-1 block">Micro Adjust</span>
@@ -286,9 +298,21 @@
                                 </select>
                             </div>
                         </div>
-                        <div class="flex items-center justify-between bg-black/30 p-3 rounded-2xl border border-white/5">
-                            <div class="text-[10px] text-slate-500 font-mono italic">DEPART: <span id="time-${p.id}" class="text-slate-300">--:--:--</span></div>
-                            <div id="cd-${p.id}" class="text-3xl font-black font-mono text-white tabular-nums">--</div>
+                        <div class="bg-black/40 p-3 rounded-2xl border border-white/5 space-y-2">
+                            <div class="flex justify-between items-start">
+                                <div class="space-y-0.5">
+                                    <div class="text-[8px] text-slate-500 font-bold uppercase tracking-widest">Exact Depart Time</div>
+                                    <div id="time-${p.id}" class="text-sm font-mono text-slate-200">--:--:--</div>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-[8px] text-cyan-500 font-bold uppercase tracking-widest">Rally Calculation</div>
+                                    <div id="formula-${p.id}" class="text-xs font-bold font-mono text-cyan-400">--分 - --s</div>
+                                </div>
+                            </div>
+                            <div class="flex justify-between items-center pt-1 border-t border-white/5">
+                                <span class="text-[10px] text-slate-600 font-bold uppercase">Launch In</span>
+                                <div id="cd-${p.id}" class="text-4xl font-black font-mono text-white tabular-nums tracking-tighter">--</div>
+                            </div>
                         </div>
                     </div>
                     <div class="h-1 bg-slate-950"><div id="bar-${p.id}" class="progress-fill h-full bg-cyan-500" style="width: 0%"></div></div>
